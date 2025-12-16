@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Loteball 3d</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Three.js & Physics -->
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+                "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js",
+                "tween": "https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.esm.js"
+            }
+        }
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;900&display=swap');
+
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: #eef2ff; 
+            font-family: 'Inter', sans-serif;
+            -webkit-user-select: none;
+            user-select: none;
+            touch-action: none;
+        }
+
+        #canvas-bg {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle at center, #ffffff 0%, #cbd5e1 100%);
+            z-index: -1;
+        }
+
+        /* Bola de Resultado na UI - Base */
+        .ball-display {
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 800; 
+            background: radial-gradient(circle at 35% 35%, #ffffff, #e2e8f0);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15), inset 0 -2px 4px rgba(0,0,0,0.1);
+            opacity: 0;
+            transform: scale(0.5);
+            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            position: relative;
+            z-index: 20;
+            color: #1e293b;
+            flex-shrink: 0;
+        }
+        
+        /* Tamanhos Dinâmicos */
+        .ball-lg { width: 56px; height: 56px; font-size: 1.5rem; }
+        .ball-md { width: 42px; height: 42px; font-size: 1.1rem; }
+        .ball-sm { width: 32px; height: 32px; font-size: 0.9rem; }
+        .ball-xs { width: 26px; height: 26px; font-size: 0.75rem; }
+
+        .ball-display::after {
+            content: ''; position: absolute; top: 15%; left: 20%;
+            width: 30%; height: 20%;
+            background: linear-gradient(to bottom, rgba(255,255,255,0.8), rgba(255,255,255,0.0));
+            border-radius: 50%; transform: rotate(-45deg);
+        }
+
+        @keyframes popIn { to { opacity: 1; transform: scale(1); } }
+
+        /* Container Central de Resultados */
+        #results-container {
+            position: absolute;
+            top: 15%;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 12px;
+            z-index: 30;
+            pointer-events: auto; /* Permite scroll se necessário */
+            transition: all 0.3s ease;
+            width: 95%; /* Largura segura */
+            max-width: 800px;
+            max-height: 55vh;
+            
+            /* CORREÇÃO DAS BARRAS CINZAS */
+            overflow-y: auto; 
+            overflow-x: hidden;
+            scrollbar-width: none; /* Firefox: Esconde barra */
+            -ms-overflow-style: none; /* IE/Edge: Esconde barra */
+            padding-bottom: 20px; /* Espaço extra para não cortar a sombra da última linha */
+        }
+
+        /* Esconde barra no Chrome/Safari/Webkit */
+        #results-container::-webkit-scrollbar {
+            display: none;
+            width: 0;
+            height: 0;
+            background: transparent;
+        }
+        
+        /* Ajuste de Gap Dinâmico via classe */
+        .gap-sm { gap: 6px !important; }
+        .gap-xs { gap: 4px !important; }
+
+        @media (max-width: 600px) {
+            .ball-lg { width: 46px; height: 46px; font-size: 1.2rem; }
+            .ball-md { width: 36px; height: 36px; font-size: 1rem; }
+            .ball-sm { width: 28px; height: 28px; font-size: 0.8rem; }
+            .ball-xs { width: 22px; height: 22px; font-size: 0.65rem; }
+            #results-container { top: 18%; max-height: 50vh; width: 100%; padding-left: 10px; padding-right: 10px; }
+        }
+
+        .modal-overlay {
+            opacity: 0; pointer-events: none; transition: opacity 0.3s ease;
+            background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px);
+        }
+        .modal-overlay.active { opacity: 1; pointer-events: auto; }
+        .modal-card {
+            transform: translateY(100%); transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .modal-overlay.active .modal-card { transform: translateY(0); }
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .modal-message-card { transform: scale(0.9); opacity: 0; transition: all 0.3s ease; }
+        .modal-overlay.active .modal-message-card { transform: scale(1); opacity: 1; }
+        
+        input[type="color"] {
+            -webkit-appearance: none; border: none; width: 32px; height: 32px; border-radius: 50%; overflow: hidden; cursor: pointer; padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: none; border-radius: 50%; border: 1px solid rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+
+    <video id="noSleepVideo" playsinline loop muted width="1" height="1" style="position:absolute; opacity:0; pointer-events:none; top:0; left:0;">
+        <source src="data:video/mp4;base64,AAAAHGZ0eXBNNGEgAAAAIGlzb21pc28yavc1" type="video/mp4">
+    </video>
+
+    <div id="canvas-bg"></div>
+    <div id="canvas-container" class="pointer-events-none"></div>
+
+    <!-- UI Layer -->
+    <div class="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-4 md:p-6">
+        
+        <!-- Header -->
+        <div class="pointer-events-auto w-full flex justify-between items-start">
+            <h1 class="text-xl md:text-2xl font-black text-slate-800 tracking-tighter drop-shadow-sm select-none">
+                LOTEBALL<span class="text-blue-900">3D</span>
+            </h1>
+            
+            <div class="flex gap-2">
+                <button id="lottery-trigger" class="px-3 py-1.5 bg-white/80 backdrop-blur-md rounded-lg text-xs font-bold text-slate-700 hover:bg-blue-900 hover:text-white transition shadow-sm border border-white/50 flex items-center gap-2 active:scale-95 max-w-[160px]">
+                    <span id="current-loto" class="truncate">Mega-Sena</span> 
+                    <i class="fa-solid fa-caret-down flex-shrink-0"></i>
+                </button>
+                
+                <button id="btn-history" class="w-8 h-8 rounded-lg bg-white/80 text-slate-600 hover:text-blue-900 flex items-center justify-center shadow-sm transition active:scale-95 border border-white/50">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Resultados (Grid adaptativo) -->
+        <div id="results-container"></div>
+
+        <!-- Notification -->
+        <div id="center-notification" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center opacity-0 transition-opacity duration-500 pointer-events-none z-0">
+            <h2 class="text-4xl md:text-7xl font-black text-slate-900/5 tracking-tighter select-none">SORTEANDO</h2>
+        </div>
+
+        <!-- Rodapé -->
+        <div class="pointer-events-auto w-full flex flex-col items-center gap-5 pb-6">
+            <div class="bg-white/40 backdrop-blur-md p-1.5 rounded-[2rem] border border-white/40 shadow-xl scale-95 md:scale-100">
+                <button id="btn-spin" class="group relative overflow-hidden bg-slate-900 text-white px-12 py-4 rounded-[1.7rem] shadow-lg transition transform active:scale-95 disabled:opacity-80 disabled:cursor-not-allowed">
+                    <span class="relative z-10 flex items-center gap-3 font-bold text-lg tracking-wider">
+                        <i class="fa-solid fa-play text-emerald-400"></i> <span id="btn-text">SORTEAR</span>
+                    </span>
+                    <div class="absolute inset-0 bg-gradient-to-r from-emerald-600 to-teal-500 opacity-0 group-hover:opacity-100 transition duration-500"></div>
+                </button>
+            </div>
+            
+            <a href="https://instagram.com/_tiagohsouza" target="_blank" class="flex items-center gap-2 text-blue-900 hover:text-blue-700 transition opacity-80 hover:opacity-100 bg-white/60 px-4 py-1.5 rounded-full backdrop-blur-sm border border-white/40 shadow-sm cursor-pointer pointer-events-auto">
+                <i class="fa-brands fa-instagram text-lg"></i>
+                <span class="text-xs font-extrabold tracking-wide">_tiagohsouza</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Modal Jogo -->
+    <div id="modal" class="modal-overlay fixed inset-0 z-50 flex items-end md:items-center justify-center">
+        <div class="modal-card w-full md:w-[450px] bg-white md:rounded-3xl rounded-t-3xl shadow-2xl overflow-hidden ring-1 ring-slate-900/5 pb-8 md:pb-0">
+            <div class="p-6 md:p-8">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-black text-slate-800 tracking-tight">Escolha o Jogo</h2>
+                    <button id="close-modal" class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 hover:bg-slate-200 transition"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+
+                <!-- Lista de Jogos -->
+                <div id="games-list" class="space-y-3">
+                    <button onclick="selectLottery('megasena')" class="w-full text-left p-4 rounded-2xl border-2 border-slate-50 hover:border-green-500 hover:bg-green-50/50 transition flex items-center justify-between group">
+                        <div class="flex items-center gap-4"><div class="w-10 h-10 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-black text-sm">60</div><span class="font-bold text-slate-800">Mega-Sena</span></div><i class="fa-solid fa-check text-green-600 opacity-0 group-hover:opacity-100 transition"></i>
+                    </button>
+                    <button onclick="selectLottery('lotofacil')" class="w-full text-left p-4 rounded-2xl border-2 border-slate-50 hover:border-purple-500 hover:bg-purple-50/50 transition flex items-center justify-between group">
+                        <div class="flex items-center gap-4"><div class="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-black text-sm">25</div><span class="font-bold text-slate-800">Lotofácil</span></div><i class="fa-solid fa-check text-purple-600 opacity-0 group-hover:opacity-100 transition"></i>
+                    </button>
+                    <button onclick="selectLottery('quina')" class="w-full text-left p-4 rounded-2xl border-2 border-slate-50 hover:border-blue-500 hover:bg-blue-50/50 transition flex items-center justify-between group">
+                        <div class="flex items-center gap-4"><div class="w-10 h-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-black text-sm">80</div><span class="font-bold text-slate-800">Quina</span></div><i class="fa-solid fa-check text-blue-600 opacity-0 group-hover:opacity-100 transition"></i>
+                    </button>
+                    
+                    <button onclick="showCustomForm()" class="w-full text-left p-4 rounded-2xl border-2 border-dashed border-slate-300 hover:border-slate-800 hover:bg-slate-50 transition flex items-center justify-between group">
+                        <div class="flex items-center gap-4">
+                            <div class="w-10 h-10 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-black text-sm"><i class="fa-solid fa-sliders"></i></div>
+                            <span class="font-bold text-slate-800" id="btn-custom-label">Personalizar</span>
+                        </div>
+                        <i class="fa-solid fa-arrow-right text-slate-400 group-hover:text-slate-900 transition"></i>
+                    </button>
+                </div>
+
+                <!-- Formulário de Customização -->
+                <div id="custom-form" class="hidden space-y-4">
+                    <!-- Nome do Sorteio -->
+                    <div class="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                        <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Nome do Sorteio</label>
+                        <input type="text" id="cust-name" placeholder="Ex: Lotomania" maxlength="18" class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-lg font-bold text-slate-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition placeholder-slate-300">
+                    </div>
+
+                    <!-- Configurações Numéricas -->
+                    <div class="flex gap-4">
+                        <div class="flex-1 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                            <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Total Bolas</label>
+                            <input type="number" id="cust-total" value="100" min="5" max="100" class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-lg font-bold text-slate-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition">
+                        </div>
+                        <div class="flex-1 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                            <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">A Sortear</label>
+                            <input type="number" id="cust-draw" value="50" min="1" max="100" class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-lg font-bold text-slate-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition">
+                        </div>
+                    </div>
+
+                    <!-- Cor -->
+                    <div class="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
+                        <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider">Cor das Bolas</label>
+                        <div class="relative w-12 h-12 flex items-center justify-center">
+                            <input type="color" id="cust-color" value="#ef4444" class="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10">
+                            <div id="color-preview" class="w-12 h-12 rounded-full bg-red-500 shadow-sm border border-slate-200"></div>
+                        </div>
+                    </div>
+
+                    <!-- Botões -->
+                    <div class="flex gap-3 pt-2">
+                        <button onclick="hideCustomForm()" class="px-6 py-3 rounded-xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 transition">Voltar</button>
+                        <button onclick="applyCustom()" class="flex-1 py-3 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition shadow-lg shadow-slate-900/20">Salvar e Sortear</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Histórico -->
+    <div id="modal-history" class="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="modal-card w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden ring-1 ring-slate-900/5 h-[65vh] flex flex-col">
+            <div class="p-5 border-b border-slate-100 flex justify-between items-center bg-white z-10">
+                <h2 class="text-lg font-black text-slate-800">Histórico</h2>
+                <button id="close-history" class="w-8 h-8 rounded-full bg-slate-50 text-slate-400 hover:text-red-500 transition flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div id="history-list" class="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50 custom-scroll"></div>
+        </div>
+    </div>
+
+    <!-- Modal de Mensagens -->
+    <div id="modal-message" class="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-6">
+        <div class="modal-message-card w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden ring-1 ring-slate-900/10 text-center p-6">
+            <div class="w-12 h-12 rounded-full bg-blue-50 text-blue-900 flex items-center justify-center mx-auto mb-4 text-xl">
+                <i id="msg-icon" class="fa-solid fa-circle-info"></i>
+            </div>
+            <h3 id="msg-title" class="text-lg font-black text-slate-800 mb-2">Aviso</h3>
+            <p id="msg-text" class="text-slate-500 text-sm mb-6 leading-relaxed">...</p>
+            <div id="msg-actions-single" class="hidden">
+                <button onclick="closeMessage()" class="w-full py-3 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition">Entendi</button>
+            </div>
+            <div id="msg-actions-confirm" class="hidden flex gap-3">
+                <button onclick="closeMessage()" class="flex-1 py-3 rounded-xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 transition">Cancelar</button>
+                <button id="btn-confirm-action" class="flex-1 py-3 rounded-xl bg-red-500 text-white font-bold hover:bg-red-600 transition">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lógica Principal -->
+    <script type="module">
+        import * as THREE from 'three';
+        import * as CANNON from 'cannon-es';
+        import TWEEN from 'tween';
+
+        const CONFIG = {
+            globeRadius: 13, ballRadius: 1.0, cameraDist: 105, 
+            colors: {
+                megasena: { hex: 0x16a34a, name: "Mega-Sena", count: 60, picks: 6 },
+                lotofacil: { hex: 0x9333ea, name: "Lotofácil", count: 25, picks: 15 },
+                quina: { hex: 0x2563eb, name: "Quina", count: 80, picks: 5 },
+                custom: { hex: 0xef4444, name: "Personalizado", count: 30, picks: 3 }
+            }
+        };
+
+        // --- CARREGAR CONFIG DO LOCALSTORAGE ---
+        const savedCustom = JSON.parse(localStorage.getItem('lotoCustomConfig'));
+        if (savedCustom) {
+            CONFIG.colors.custom = { ...CONFIG.colors.custom, ...savedCustom };
+            document.addEventListener('DOMContentLoaded', () => {
+                const btnLabel = document.getElementById('btn-custom-label');
+                if(btnLabel) btnLabel.innerText = savedCustom.name || "Personalizado";
+            });
+        }
+
+        let scene, camera, renderer, world;
+        let balls = []; 
+        let isSpinning = false;
+        let currentLottery = 'megasena';
+        let currentResults = [];
+        let ballGeometryCache;
+
+        async function enableWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    let wakeLock = await navigator.wakeLock.request('screen');
+                    document.addEventListener('visibilitychange', async () => {
+                        if (document.visibilityState === 'visible') wakeLock = await navigator.wakeLock.request('screen');
+                    });
+                }
+            } catch (err) {}
+            try { document.getElementById('noSleepVideo').play().catch(()=>{}); } catch(e){}
+        }
+        document.body.addEventListener('click', enableWakeLock, { once: true });
+        document.body.addEventListener('touchstart', enableWakeLock, { once: true });
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 6, CONFIG.cameraDist);
+            camera.lookAt(0, -5, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFShadowMap; 
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            setupLighting();
+
+            world = new CANNON.World();
+            world.gravity.set(0, -60, 0); 
+            world.broadphase = new CANNON.SAPBroadphase(world);
+            world.solver.iterations = 5; 
+            world.solver.tolerance = 0.01;
+            
+            const mat = new CANNON.Material();
+            const contact = new CANNON.ContactMaterial(mat, mat, { friction: 0.02, restitution: 0.5 });
+            world.addContactMaterial(contact);
+
+            ballGeometryCache = new THREE.SphereGeometry(CONFIG.ballRadius, 24, 24);
+            ballGeometryCache.rotateY(-Math.PI / 2);
+
+            createEnvironment();
+            setupLottery('megasena');
+
+            window.addEventListener('resize', onWindowResize);
+            setupUI();
+            
+            animate();
+        }
+
+        function setupLighting() {
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const spot = new THREE.SpotLight(0xffffff, 1100);
+            spot.position.set(20, 50, 40); 
+            spot.angle = 0.5; spot.penumbra = 0.4; spot.castShadow = true; 
+            spot.shadow.mapSize.set(1024, 1024); spot.shadow.bias = -0.0001;
+            scene.add(spot);
+            const fill = new THREE.PointLight(0xdbeafe, 250);
+            fill.position.set(-30, 20, 20); scene.add(fill);
+            const rim = new THREE.SpotLight(0xffffff, 600);
+            rim.position.set(0, 30, -50); rim.lookAt(0,0,0); scene.add(rim);
+        }
+
+        function createEnvironment() {
+            const floor = new THREE.Mesh(new THREE.PlaneGeometry(300, 300), new THREE.ShadowMaterial({ opacity: 0.15 }));
+            floor.rotation.x = -Math.PI / 2; floor.position.y = -CONFIG.globeRadius - 8; floor.receiveShadow = true;
+            scene.add(floor);
+
+            const globeGeo = new THREE.SphereGeometry(CONFIG.globeRadius, 32, 32);
+            const glassMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, metalness: 0, roughness: 0.1, transmission: 0.95, thickness: 1.0, ior: 1.5, transparent: true });
+            scene.add(new THREE.Mesh(globeGeo, glassMat));
+            const outerMat = glassMat.clone(); outerMat.side = THREE.FrontSide;
+            scene.add(new THREE.Mesh(globeGeo, outerMat));
+
+            const stand = new THREE.Group();
+            const pole = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.8, 14, 16), new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.4 }));
+            pole.position.y = -CONFIG.globeRadius - 3;
+            const base = new THREE.Mesh(new THREE.CylinderGeometry(8, 9, 1.5, 32), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2 }));
+            base.position.y = -CONFIG.globeRadius - 9; base.receiveShadow = true;
+            const rim = new THREE.Mesh(new THREE.TorusGeometry(CONFIG.globeRadius + 0.3, 0.4, 12, 64), new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.5, roughness: 0.4 }));
+            rim.rotation.x = Math.PI/2;
+            stand.add(pole, base, rim); scene.add(stand);
+        }
+
+        function createBallTexture(number, colorHex) {
+            const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 64; 
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#' + new THREE.Color(colorHex).getHexString(); ctx.fillRect(0, 0, 128, 64);
+            ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(64, 32, 22, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#0f172a'; ctx.font = '900 24px Inter'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(number < 10 ? '0'+number : number, 64, 34);
+            const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace; return tex;
+        }
+
+        function setupLottery(type) {
+            currentLottery = type;
+            const cfg = CONFIG.colors[type];
+            document.getElementById('current-loto').innerText = cfg.name;
+            const container = document.getElementById('results-container');
+            
+            balls.forEach(b => { scene.remove(b.mesh); world.removeBody(b.body); if(b.mesh.material.map) b.mesh.material.map.dispose(); b.mesh.material.dispose(); });
+            balls = []; currentResults = []; container.innerHTML = '';
+
+            const count = cfg.count;
+            const shape = new CANNON.Sphere(CONFIG.ballRadius);
+            const grid = Math.ceil(Math.pow(count, 1/3)); const spacing = CONFIG.ballRadius * 2.05; const offset = (grid * spacing) / 2;
+
+            for(let i=1; i<=count; i++) {
+                const tex = createBallTexture(i, cfg.hex);
+                const mat = new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff, roughness: 0.4, metalness: 0.1 });
+                const mesh = new THREE.Mesh(ballGeometryCache, mat); mesh.castShadow = true; scene.add(mesh);
+                const body = new CANNON.Body({ mass: 5, shape: shape, position: new CANNON.Vec3((i % grid) * spacing - offset + Math.random(), Math.floor((i / grid) % grid) * spacing - offset, Math.floor(i / (grid * grid)) * spacing - offset), linearDamping: 0.5, angularDamping: 0.5 });
+                world.addBody(body); balls.push({ mesh, body, number: i, active: true });
+            }
+        }
+
+        function startDraw() {
+            if(isSpinning) return;
+            isSpinning = true; currentResults = []; enableWakeLock();
+            
+            const btn = document.getElementById('btn-spin'); btn.disabled = true; document.getElementById('btn-text').innerText = "SORTEANDO..."; document.getElementById('center-notification').style.opacity = '1';
+            balls.forEach(b => { if(b.active) { b.body.wakeUp(); b.body.applyImpulse(new CANNON.Vec3((Math.random()-0.5)*180, Math.random()*180, (Math.random()-0.5)*180), b.body.position); } });
+
+            let picks = CONFIG.colors[currentLottery].picks;
+            let count = 0; let interval = 3000;
+            
+            if(picks > 6) interval = 1500;
+            if(picks > 15) interval = 800;
+            if(picks > 30) interval = 400; 
+            
+            function next() { if(count >= picks) { finishDraw(); return; } extractBall(); count++; setTimeout(next, interval); }
+            setTimeout(next, 2000);
+        }
+
+        function extractBall() {
+            const avail = balls.filter(b => b.active); if(!avail.length) return;
+            const ball = avail[Math.floor(Math.random() * avail.length)]; ball.active = false; currentResults.push(ball.number);
+            world.removeBody(ball.body); ball.body.velocity.set(0,0,0); ball.body.angularVelocity.set(0,0,0);
+            
+            const camDir = new THREE.Vector3(); camera.getWorldDirection(camDir);
+            const targetPos = camera.position.clone().add(camDir.multiplyScalar(12));
+            const dummy = new THREE.Object3D(); dummy.position.copy(targetPos); dummy.lookAt(camera.position); 
+            
+            new TWEEN.Tween(ball.mesh.position).to(targetPos, 700).easing(TWEEN.Easing.Cubic.Out).start();
+            new TWEEN.Tween(ball.mesh.quaternion).to(dummy.quaternion, 900).easing(TWEEN.Easing.Back.Out).start();
+
+            const fadeTime = CONFIG.colors[currentLottery].picks > 15 ? 600 : 1500;
+
+            setTimeout(() => {
+                new TWEEN.Tween(ball.mesh.scale).to({x: 0.001, y: 0.001, z: 0.001}, 400).easing(TWEEN.Easing.Back.In).onComplete(() => { ball.mesh.visible = false; addToUI(ball.number); }).start();
+            }, fadeTime);
+        }
+
+        function finishDraw() {
+            isSpinning = false;
+            const btn = document.getElementById('btn-spin'); btn.disabled = false; document.getElementById('btn-text').innerText = "NOVO SORTEIO"; document.getElementById('center-notification').style.opacity = '0';
+            saveToHistory();
+            btn.onclick = () => { setupLottery(currentLottery); btn.onclick = startDraw; document.getElementById('btn-text').innerText = "SORTEAR"; };
+        }
+
+        function addToUI(num) {
+            const container = document.getElementById('results-container');
+            const totalPicks = CONFIG.colors[currentLottery].picks;
+            
+            let sizeClass = 'ball-lg'; 
+            if(totalPicks > 6) sizeClass = 'ball-md'; 
+            if(totalPicks > 15) sizeClass = 'ball-sm'; 
+            if(totalPicks > 35) sizeClass = 'ball-xs'; 
+            
+            if(totalPicks > 20) { container.classList.add('gap-sm'); }
+            else { container.classList.remove('gap-sm'); }
+
+            const div = document.createElement('div'); 
+            div.className = `ball-display ${sizeClass}`; 
+            div.innerText = num < 10 ? '0'+num : num;
+            
+            const color = '#' + new THREE.Color(CONFIG.colors[currentLottery].hex).getHexString();
+            div.style.color = color; div.style.border = `2px solid ${color}`;
+            container.appendChild(div);
+            
+            // Auto scroll suave para baixo quando adicionar novo número
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function saveToHistory() {
+            const history = JSON.parse(localStorage.getItem('lotoHistory') || '[]');
+            history.unshift({ id: Date.now(), date: new Date().toLocaleString('pt-BR'), type: CONFIG.colors[currentLottery].name, numbers: [...currentResults].sort((a,b) => a-b) });
+            if(history.length > 50) history.pop();
+            localStorage.setItem('lotoHistory', JSON.stringify(history));
+            updateHistoryUI();
+        }
+
+        // --- MENSAGENS E ALERTAS ---
+        window.showMessage = (title, text, isConfirm = false, onConfirm = null) => {
+            const modal = document.getElementById('modal-message');
+            document.getElementById('msg-title').innerText = title; document.getElementById('msg-text').innerText = text;
+            const single = document.getElementById('msg-actions-single'); const confirm = document.getElementById('msg-actions-confirm'); const icon = document.getElementById('msg-icon');
+            if(isConfirm) {
+                single.classList.add('hidden'); confirm.classList.remove('hidden'); confirm.classList.add('flex');
+                icon.className = 'fa-solid fa-triangle-exclamation text-yellow-500';
+                document.getElementById('btn-confirm-action').onclick = () => { if(onConfirm) onConfirm(); closeMessage(); };
+            } else {
+                single.classList.remove('hidden'); confirm.classList.add('hidden'); confirm.classList.remove('flex');
+                icon.className = 'fa-solid fa-circle-info text-blue-900';
+            }
+            modal.classList.add('active');
+        };
+        window.closeMessage = () => document.getElementById('modal-message').classList.remove('active');
+
+        // --- CUSTOM UI LOGIC ---
+        window.showCustomForm = () => {
+            document.getElementById('games-list').classList.add('hidden');
+            document.getElementById('custom-form').classList.remove('hidden');
+            document.getElementById('cust-total').value = CONFIG.colors.custom.count;
+            document.getElementById('cust-draw').value = CONFIG.colors.custom.picks;
+            document.getElementById('cust-color').value = '#' + new THREE.Color(CONFIG.colors.custom.hex).getHexString();
+            document.getElementById('color-preview').style.backgroundColor = document.getElementById('cust-color').value;
+            document.getElementById('cust-name').value = CONFIG.colors.custom.name !== "Personalizado" ? CONFIG.colors.custom.name : "";
+        };
+        window.hideCustomForm = () => {
+            document.getElementById('custom-form').classList.add('hidden');
+            document.getElementById('games-list').classList.remove('hidden');
+        };
+        document.getElementById('cust-color').addEventListener('input', (e) => {
+            document.getElementById('color-preview').style.backgroundColor = e.target.value;
+        });
+
+        window.applyCustom = () => {
+            const total = parseInt(document.getElementById('cust-total').value);
+            const draw = parseInt(document.getElementById('cust-draw').value);
+            const color = document.getElementById('cust-color').value;
+            let name = document.getElementById('cust-name').value.trim();
+
+            if (total < 5 || total > 100) return window.showMessage("Atenção", "O total de bolas deve ser entre 5 e 100.");
+            if (draw < 1 || draw > total) return window.showMessage("Atenção", "O número de sorteios deve ser menor que o total de bolas.");
+            
+            if(!name) name = "Personalizado";
+
+            CONFIG.colors.custom.count = total;
+            CONFIG.colors.custom.picks = draw;
+            CONFIG.colors.custom.hex = parseInt(color.replace('#', '0x'));
+            CONFIG.colors.custom.name = name;
+
+            localStorage.setItem('lotoCustomConfig', JSON.stringify({
+                count: total, picks: draw, hex: CONFIG.colors.custom.hex, name: name
+            }));
+
+            document.getElementById('btn-custom-label').innerText = name;
+            selectLottery('custom');
+        };
+
+        window.clearHistory = () => window.showMessage("Limpar Histórico", "Tem certeza que deseja apagar todo o histórico?", true, () => { localStorage.removeItem('lotoHistory'); updateHistoryUI(); window.showMessage("Sucesso", "Histórico limpo!"); });
+        window.deleteItem = (id) => {
+            let history = JSON.parse(localStorage.getItem('lotoHistory') || '[]'); history = history.filter(item => item.id !== id);
+            localStorage.setItem('lotoHistory', JSON.stringify(history)); updateHistoryUI();
+        };
+        window.copyNumbers = (text) => {
+            const t = document.createElement("textarea"); t.value = text; t.style.position = "fixed"; t.style.left = "-9999px"; document.body.appendChild(t); t.focus(); t.select();
+            try { document.execCommand('copy'); window.showMessage("Copiado!", `Números: ${text}`); } catch (e) { window.showMessage("Erro", "Não foi possível copiar."); } document.body.removeChild(t);
+        };
+
+        function updateHistoryUI() {
+            const list = document.getElementById('history-list'); const history = JSON.parse(localStorage.getItem('lotoHistory') || '[]');
+            if(history.length === 0) { list.innerHTML = '<div class="text-center text-slate-400 mt-10 text-sm">Nenhum sorteio salvo.</div>'; return; }
+            let html = `<div class="flex justify-end mb-3"><button onclick="window.clearHistory()" class="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer"><i class="fa-regular fa-trash-can"></i> Limpar Tudo</button></div>`;
+            html += history.map(item => `
+                <div class="bg-white p-3 rounded-xl border border-slate-100 shadow-sm hover:shadow-md transition">
+                    <div class="flex justify-between items-start mb-2">
+                        <div><span class="font-bold text-slate-700 text-sm block">${item.type}</span><span class="text-[10px] text-slate-400 block">${item.date}</span></div>
+                        <div class="flex gap-2">
+                            <button onclick="window.copyNumbers('${item.numbers.join(', ')}')" class="text-blue-900 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer" title="Copiar"><i class="fa-regular fa-copy"></i></button>
+                            <button onclick="window.deleteItem(${item.id})" class="text-slate-400 hover:text-red-500 bg-slate-50 hover:bg-red-50 px-3 py-1.5 rounded-lg text-xs transition cursor-pointer" title="Apagar"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap gap-1">${item.numbers.map(n => `<span class="w-6 h-6 rounded-full bg-slate-50 text-slate-600 text-[10px] font-bold flex items-center justify-center border border-slate-200">${n < 10 ? '0'+n : n}</span>`).join('')}</div>
+                </div>`).join('');
+            list.innerHTML = html;
+        }
+        window.updateHistoryUI = updateHistoryUI;
+
+        function animate(time) {
+            requestAnimationFrame(animate); TWEEN.update(time); world.step(1/60);
+            const r = CONFIG.globeRadius - CONFIG.ballRadius; const center = new CANNON.Vec3(0,0,0);
+            for(let i=0; i<balls.length; i++) {
+                const b = balls[i]; if(!b.active) continue;
+                if(b.body.position.distanceTo(center) > r) {
+                    const n = b.body.position.unit(); b.body.position.copy(n.scale(r));
+                    const vNormal = n.scale(b.body.velocity.dot(n)); b.body.velocity = b.body.velocity.vsub(vNormal.scale(1.4));
+                }
+                if(isSpinning) {
+                    const vortex = new CANNON.Vec3(-b.body.position.z, 0, b.body.position.x).unit().scale(70);
+                    vortex.y = (Math.random()-0.4) * 120; b.body.applyForce(vortex, b.body.position);
+                }
+                b.mesh.position.copy(b.body.position); b.mesh.quaternion.copy(b.body.quaternion);
+            }
+            renderer.render(scene, camera);
+        }
+        function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
+        function setupUI() {
+            const toggle = (id, show) => document.getElementById(id).classList.toggle('active', show);
+            document.getElementById('lottery-trigger').onclick = () => toggle('modal', true);
+            document.getElementById('close-modal').onclick = () => { toggle('modal', false); hideCustomForm(); };
+            document.getElementById('btn-history').onclick = () => { updateHistoryUI(); toggle('modal-history', true); };
+            document.getElementById('close-history').onclick = () => toggle('modal-history', false);
+            window.selectLottery = (t) => { if(!isSpinning) { setupLottery(t); toggle('modal', false); hideCustomForm(); } }
+            document.getElementById('btn-spin').onclick = startDraw;
+        }
+        init();
+    </script>
+</body>
+</html>
+
+
